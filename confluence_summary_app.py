@@ -35,7 +35,7 @@ selected_market = markets[selected_market_name]
 # -----------------------------
 def get_data(symbol, period="60d", interval="1d"):
     try:
-        df = yf.download(symbol, period=period, interval=interval, progress=False)
+        df = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=True)
         if df.empty:
             return None
         return df
@@ -45,11 +45,30 @@ def get_data(symbol, period="60d", interval="1d"):
 def calculate_ema(df, period=50):
     return df['Close'].ewm(span=period, adjust=False).mean()
 
-def get_pdh_pdl(df):
-    """Return previous day high and low as scalars"""
-    if df is None or len(df) < 2:
-        return None, None
-    return float(df['High'].iloc[-2]), float(df['Low'].iloc[-2])
+def get_previous_trading_high_low(df):
+    """Return previous day's high, low, and current close safely"""
+    if df is None or df.empty:
+        return None, None, None
+
+    # Normalize columns: handle MultiIndex from yfinance
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0].lower() for col in df.columns]
+    else:
+        df.columns = [c.lower() for c in df.columns]
+
+    required_cols = ['high', 'low', 'close']
+    for col in required_cols:
+        if col not in df.columns:
+            return None, None, None
+
+    df = df.dropna(subset=required_cols)
+    if len(df) < 2:
+        return None, None, None
+
+    prev_high = float(df['high'].iloc[-2])
+    prev_low = float(df['low'].iloc[-2])
+    current_close = float(df['close'].iloc[-1])
+    return prev_high, prev_low, current_close
 
 # -----------------------------
 # Multi-timeframe EMA % Calculation
@@ -88,11 +107,7 @@ intraday_avg = round(sum(intraday_percents)/len(intraday_percents), 2) if intrad
 # Determine Market Bias using PDH/PDL
 # -----------------------------
 daily_df = get_data(selected_market, period="10d", interval="1d")
-if daily_df is not None and not daily_df.empty:
-    pdh, pdl = get_pdh_pdl(daily_df)
-    current_close = float(daily_df['Close'].iloc[-1])
-else:
-    pdh, pdl, current_close = None, None, None
+pdh, pdl, current_close = get_previous_trading_high_low(daily_df)
 
 if pdh is None or pdl is None or current_close is None:
     market_bias = "N/A"
